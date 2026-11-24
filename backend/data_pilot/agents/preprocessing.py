@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import pandas as pd
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -38,18 +39,35 @@ class PreprocessingAgent:
     of validation data.
     """
 
-    def create_strategy(
-        self,
-        df: pd.DataFrame,
+    @staticmethod
+    def is_identifier_column(name: str, kind: str | None = None, unique_count: int = 0, total_rows: int = 0) -> bool:
+        """Detect row/entity identifier columns that must not enter ML feature matrices."""
+        col = str(name).strip()
+        lower = col.lower()
+        if lower == "id" or lower.endswith("_id") or lower.endswith("-id"):
+            return True
+        if len(col) >= 3 and col.endswith("Id") and col[-3].islower():
+            return True
+        if kind == "categorical" and total_rows >= 10 and unique_count == total_rows:
+            return True
+        return False
+
+    @classmethod
+    def _partition_columns(
+        cls,
         profile: DatasetProfile,
         target_column: str | None = None,
-    ) -> dict:
+    ) -> tuple[list[str], list[str], list[str], list[str]]:
         numeric_columns: list[str] = []
         categorical_columns: list[str] = []
         datetime_columns: list[str] = []
+        excluded_id_columns: list[str] = []
 
         for column in profile.columns:
             if column.name == target_column:
+                continue
+            if cls.is_identifier_column(column.name, column.kind, column.unique_count, profile.rows):
+                excluded_id_columns.append(column.name)
                 continue
             if column.kind == "numeric":
                 numeric_columns.append(column.name)
@@ -58,7 +76,25 @@ class PreprocessingAgent:
             elif column.kind == "datetime":
                 datetime_columns.append(column.name)
 
+        return numeric_columns, categorical_columns, datetime_columns, excluded_id_columns
+
+    def create_strategy(
+        self,
+        df: pd.DataFrame,
+        profile: DatasetProfile,
+        target_column: str | None = None,
+    ) -> dict:
+        numeric_columns, categorical_columns, datetime_columns, excluded_id_columns = self._partition_columns(
+            profile, target_column
+        )
+
         strategies: list[dict] = []
+        if excluded_id_columns:
+            strategies.append({
+                "operation": "identifier_exclusion",
+                "strategy": "drop_identifier_columns",
+                "columns": excluded_id_columns,
+            })
         if numeric_columns:
             strategies += [
                 {"operation": "numeric_imputation", "strategy": "median", "columns": numeric_columns},
@@ -84,6 +120,7 @@ class PreprocessingAgent:
             "numeric_columns": numeric_columns,
             "categorical_columns": categorical_columns,
             "datetime_columns": datetime_columns,
+            "excluded_identifier_columns": excluded_id_columns,
             "strategies": strategies,
             "data_leakage_protection": True,
             "execution": "sklearn ColumnTransformer fitted only on training data",
@@ -114,19 +151,9 @@ class PreprocessingAgent:
         target_column: str | None = None,
     ) -> tuple[ColumnTransformer, list[str], list[str]]:
         """Build an sklearn transformer without fitting it."""
-        numeric_columns: list[str] = []
-        categorical_columns: list[str] = []
-        datetime_columns: list[str] = []
-
-        for column in profile.columns:
-            if column.name == target_column:
-                continue
-            if column.kind == "numeric":
-                numeric_columns.append(column.name)
-            elif column.kind in {"categorical", "boolean"}:
-                categorical_columns.append(column.name)
-            elif column.kind == "datetime":
-                datetime_columns.append(column.name)
+        numeric_columns, categorical_columns, datetime_columns, _ = self._partition_columns(
+            profile, target_column
+        )
 
         datetime_features = [
             f"{col}__{part}"

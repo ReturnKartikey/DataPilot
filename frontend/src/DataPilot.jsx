@@ -202,34 +202,40 @@ function NavItem({ label, items, onSelect }) {
         {label}
       </button>
 
-      {/* Dropdown */}
+      {/* Dropdown wrapper includes a 4px hover bridge so moving into items never triggers onMouseLeave */}
       <div
         style={{
           position: "absolute",
-          top: "calc(100% + 4px)",
+          top: "100%",
           left: 0,
+          paddingTop: 4,
           minWidth: 190,
-          background: T.cream,
-          border: `1px solid ${T.ruleMid}`,
-          borderTop: `2px solid ${T.clay}`,
-          boxShadow: "0 8px 24px rgba(44,34,30,0.10)",
           opacity: open ? 1 : 0,
           pointerEvents: open ? "all" : "none",
           transform: open ? "translateY(0)" : "translateY(-6px)",
-          transition: "opacity 0.18s, transform 0.18s",
+          transition: "opacity 0.18s ease-out, transform 0.18s ease-out",
           zIndex: 200,
         }}
       >
-        {items.map((item) => (
-          <DropLink
-            key={item}
-            label={item}
-            onClick={() => {
-              setOpen(false);
-              if (onSelect) onSelect(label, item);
-            }}
-          />
-        ))}
+        <div
+          style={{
+            background: T.cream,
+            border: `1px solid ${T.ruleMid}`,
+            borderTop: `2px solid ${T.clay}`,
+            boxShadow: "0 8px 24px rgba(44,34,30,0.10)",
+          }}
+        >
+          {items.map((item) => (
+            <DropLink
+              key={item}
+              label={item}
+              onClick={() => {
+                setOpen(false);
+                if (onSelect) onSelect(label, item);
+              }}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );

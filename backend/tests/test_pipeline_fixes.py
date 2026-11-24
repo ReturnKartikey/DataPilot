@@ -53,6 +53,17 @@ class PipelineFixesTests(unittest.TestCase):
         # X_train and X_val must have identical aligned columns
         self.assertEqual(list(X_train.columns), list(X_val.columns))
 
+    def test_run_pipeline_excludes_identifier_columns_from_features_and_shap(self):
+        """Verify end-to-end run_pipeline drops customer_id before model training and SHAP."""
+        churn_df = pd.read_csv("sample_data/customer_churn.csv")
+        res = run_pipeline(churn_df, target_column="churn", problem_type="classification")
+        excluded = res["preprocessing"].get("excluded_identifier_columns", [])
+        self.assertIn("customer_id", excluded)
+        transformed_preview = res["preprocessing"]["execution"].get("transformed_features_preview", [])
+        self.assertFalse(any("customer_id" in name for name in transformed_preview))
+        importance = res["explainability"].get("feature_importance", {})
+        self.assertFalse(any("customer_id" in name for name in importance))
+
     def test_closed_loop_replanning_on_imbalance(self):
         """Verify closed loop executes when Critic identifies actionable overrides."""
         churn_df = pd.read_csv("sample_data/customer_churn.csv")

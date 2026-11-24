@@ -78,6 +78,26 @@ class ArtifactStoreTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 store.load_model("12345678-1234-5678-1234-567812345678")
 
+    def test_tampered_artifact_is_rejected_before_deserialization(self):
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = ArtifactStore(tmpdir)
+            model = LogisticRegression()
+            model.fit([[1.0], [2.0], [3.0]], [0, 0, 1])
+            save_res = store.save_model(model, None, "logistic_regression", ["f1"])
+            artifact_id = save_res["artifact_id"]
+
+            bundle_path = Path(tmpdir) / artifact_id / "model_bundle.joblib"
+            bundle_path.write_bytes(b"tampered-bytes")
+            with self.assertRaises(ValueError):
+                store.load_model(artifact_id)
+
+            manifest_path = Path(tmpdir) / artifact_id / "manifest.json"
+            manifest_path.unlink()
+            with self.assertRaises(ValueError):
+                store.load_model(artifact_id)
+
 
 if __name__ == "__main__":
     unittest.main()

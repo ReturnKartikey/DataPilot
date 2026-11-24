@@ -48,8 +48,36 @@ class APITests(unittest.TestCase):
         self.assertIn("dataset.profile", names)
         allowed = self.client.post("/api/tools/call", json={"name": "dataset.profile", "arguments": {"target_column": "churn"}})
         self.assertEqual(allowed.status_code, 200)
+        invalid_top_k = self.client.post("/api/tools/call", json={"name": "research.search", "arguments": {"query": "churn", "top_k": 999}})
+        self.assertEqual(invalid_top_k.status_code, 400)
+        unexpected_arg = self.client.post("/api/tools/call", json={"name": "dataset.list_samples", "arguments": {"extra": "nope"}})
+        self.assertEqual(unexpected_arg.status_code, 400)
         denied = self.client.post("/api/tools/call", json={"name": "execute.shell", "arguments": {}})
         self.assertEqual(denied.status_code, 403)
+
+    def test_optional_api_token_and_rate_limit(self):
+        import os
+        from unittest.mock import patch
+        import app as app_module
+
+        with patch.dict(os.environ, {"DATAPILOT_API_TOKEN": "secret-token-123"}):
+            unauth = self.client.post("/api/tools/call", json={"name": "dataset.list_samples", "arguments": {}})
+            self.assertEqual(unauth.status_code, 401)
+            auth = self.client.post(
+                "/api/tools/call",
+                json={"name": "dataset.list_samples", "arguments": {}},
+                headers={"Authorization": "Bearer secret-token-123"},
+            )
+            self.assertEqual(auth.status_code, 200)
+
+        with app_module._RATE_LIMIT_LOCK:
+            app_module._RATE_LIMIT_BUCKETS.clear()
+        with patch.dict(os.environ, {"DATAPILOT_RATE_LIMIT_PER_MIN": "2"}):
+            self.assertEqual(self.client.post("/api/tools/call", json={"name": "dataset.list_samples", "arguments": {}}).status_code, 200)
+            self.assertEqual(self.client.post("/api/tools/call", json={"name": "dataset.list_samples", "arguments": {}}).status_code, 200)
+            self.assertEqual(self.client.post("/api/tools/call", json={"name": "dataset.list_samples", "arguments": {}}).status_code, 429)
+        with app_module._RATE_LIMIT_LOCK:
+            app_module._RATE_LIMIT_BUCKETS.clear()
 
     def test_history_endpoint(self):
         self.client.post("/api/analyze", data={"sample_id": "churn", "inquiry": "Predict churn"})

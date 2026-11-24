@@ -112,16 +112,3 @@ export async function regenerateReport(experimentId) {
   }
   return await res.json();
 }
-
-
-export async function runV4Analytics({ file, sampleId, inquiry, analyticsType }) {
-  const body = new FormData();
-  if (file) body.append("file", file);
-  if (sampleId) body.append("sample_id", sampleId);
-  body.append("inquiry", inquiry);
-  if (analyticsType) body.append("analytics_type", analyticsType);
-  const response = await fetch(`${API_BASE}/v4/analytics/query`, { method: "POST", body });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.detail || `Analytics failed (${response.status})`);
-  return payload;
-}

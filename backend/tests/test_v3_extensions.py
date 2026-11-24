@@ -84,7 +84,7 @@ def test_v3_research_api_and_tool_catalogue():
     client = TestClient(app)
     health = client.get("/api/health")
     assert health.status_code == 200
-    assert health.json()["version"] == "4.0.0"
+    assert health.json()["version"] == "4.5.0"
     text = "Research methodology discusses stratified validation and class imbalance. " * 8
     indexed = client.post("/api/research/index", json={"title": "Test research note", "text": text, "source": "unit test"})
     assert indexed.status_code == 200

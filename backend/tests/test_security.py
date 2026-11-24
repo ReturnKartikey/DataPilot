@@ -74,6 +74,23 @@ class SecurityGuardianTests(unittest.TestCase):
         self.assertFalse(result.allowed)
         self.assertIn("unauthorized_model", result.risk_types)
 
+    def test_word_boundary_allows_benign_shellfish_inquiry(self):
+        result = self.guardian.inspect(
+            self.plan,
+            self.profile,
+            "Analyze shellfish sales across coastal regions",
+        )
+        self.assertTrue(result.allowed)
+
+    def test_standalone_shell_word_is_still_blocked(self):
+        result = self.guardian.inspect(
+            self.plan,
+            self.profile,
+            "Run shell command to inspect environment",
+        )
+        self.assertFalse(result.allowed)
+        self.assertIn("unsafe_instruction", result.risk_types)
+
 
 if __name__ == "__main__":
     unittest.main()

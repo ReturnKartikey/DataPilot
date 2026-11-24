@@ -133,7 +133,12 @@ class SecurityGuardian:
         ).lower()
 
         for term in self.FORBIDDEN_TERMS:
-            if term.lower() in text:
+            term_lower = term.lower()
+            if re.fullmatch(r"[a-z0-9_]+", term_lower):
+                matched = bool(re.search(r"(?<![a-z0-9_])" + re.escape(term_lower) + r"(?![a-z0-9_])", text))
+            else:
+                matched = term_lower in text
+            if matched:
                 violations.append(f"Potentially dangerous instruction detected: '{term}'")
                 if term in {"upload_dataset", "send_dataset", "external_url", "exfiltrate"}:
                     risk_types.add("data_exfiltration")

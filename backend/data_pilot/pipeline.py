@@ -138,7 +138,12 @@ def _prepare_train_val_data(
     # Drop clear identifier columns (ID columns, etc.)
     cols_to_drop = [
         c for c in X_raw.columns
-        if c.lower().endswith(("_id", "id")) or (X_raw[c].dtype == object and X_raw[c].nunique() == len(X_raw))
+        if PreprocessingAgent.is_identifier_column(
+            c,
+            "categorical" if X_raw[c].dtype == object else None,
+            int(X_raw[c].nunique()),
+            len(X_raw),
+        )
     ]
     if cols_to_drop and len(cols_to_drop) < len(X_raw.columns):
         X_raw = X_raw.drop(columns=cols_to_drop)

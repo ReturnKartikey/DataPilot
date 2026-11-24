@@ -156,21 +156,35 @@ function ResearchFindingCards({ findings = [] }) {
   </div>;
 }
 
+function safeExternalUrl(rawUrl) {
+  if (typeof rawUrl !== "string" || !rawUrl.trim()) return null;
+  try {
+    const parsed = new URL(rawUrl.trim(), window.location.origin);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
 function ResearchSourceCards({ sources = [] }) {
   if (!sources.length) return <div style={{ padding: 14, background: T.creamDark, color: T.sepia, fontSize: 12 }}>No external papers were retrieved for this run. Offline recommendations are shown separately and are not presented as papers.</div>;
   return <div style={{ display: "grid", gap: 10, marginBottom: 18 }}>
-    {sources.map((source, index) => <article key={source.doi || source.url || index} style={{ padding: 15, background: T.cream, border: `1px solid ${T.rule}`, borderRadius: 7 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-        <strong style={{ color: T.ink, fontFamily: T.playfair, fontSize: 15 }}>{source.title || "Untitled research record"}</strong>
-        <Pill>{source.provider || "Research index"} · {source.evidence_level || "metadata_only"}</Pill>
-      </div>
-      <div style={{ color: T.sepia, fontSize: 11, marginTop: 6 }}>{(source.authors || []).join(", ") || "Authors not listed"} · {source.year || "Year unavailable"} · {source.source || "Source unavailable"}</div>
-      {source.abstract && <p style={{ color: T.inkLight, fontSize: 12, lineHeight: 1.6, margin: "9px 0" }}>{source.abstract.slice(0, 900)}{source.abstract.length > 900 ? "…" : ""}</p>}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8, fontSize: 11 }}>
-        {source.doi && <a href={`https://doi.org/${source.doi.replace(/^https?:\/\/doi\.org\//, "")}`} target="_blank" rel="noreferrer" style={{ color: "#55783d" }}>Open DOI ↗</a>}
-        {source.url && <a href={source.url} target="_blank" rel="noreferrer" style={{ color: "#55783d" }}>Source record ↗</a>}
-      </div>
-    </article>)}
+    {sources.map((source, index) => {
+      const doiUrl = source.doi ? safeExternalUrl(`https://doi.org/${String(source.doi).replace(/^https?:\/\/doi\.org\//, "")}`) : null;
+      const sourceUrl = safeExternalUrl(source.url);
+      return <article key={source.doi || source.url || index} style={{ padding: 15, background: T.cream, border: `1px solid ${T.rule}`, borderRadius: 7 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <strong style={{ color: T.ink, fontFamily: T.playfair, fontSize: 15 }}>{source.title || "Untitled research record"}</strong>
+          <Pill>{source.provider || "Research index"} · {source.evidence_level || "metadata_only"}</Pill>
+        </div>
+        <div style={{ color: T.sepia, fontSize: 11, marginTop: 6 }}>{(source.authors || []).join(", ") || "Authors not listed"} · {source.year || "Year unavailable"} · {source.source || "Source unavailable"}</div>
+        {source.abstract && <p style={{ color: T.inkLight, fontSize: 12, lineHeight: 1.6, margin: "9px 0" }}>{source.abstract.slice(0, 900)}{source.abstract.length > 900 ? "…" : ""}</p>}
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8, fontSize: 11 }}>
+          {doiUrl && <a href={doiUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#55783d" }}>Open DOI ↗</a>}
+          {sourceUrl && <a href={sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#55783d" }}>Source record ↗</a>}
+        </div>
+      </article>;
+    })}
   </div>;
 }
 
@@ -366,7 +380,6 @@ export default function AnalysisResultsModal({ data, onClose }) {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              dangerouslySetInnerHTML={{ __html: tab.label }}
               style={{
                 padding: "12px 15px",
                 flex: "0 0 auto",
@@ -383,7 +396,9 @@ export default function AnalysisResultsModal({ data, onClose }) {
                 cursor: "pointer",
                 transition: "all 0.15s",
               }}
-            />
+            >
+              {tab.label}
+            </button>
           ))}
         </div>
 

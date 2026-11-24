@@ -1,17 +1,21 @@
 """DataPilot REST API Server."""
 
+import hmac
 import io
 import os
+import time
 import logging
 import importlib.util
+from collections import defaultdict, deque
 from html import escape
 from pathlib import Path
+from threading import Lock
 from typing import Optional
 from pydantic import BaseModel, Field
 
 import pandas as pd
 import numpy as np
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -36,6 +40,8 @@ from data_pilot.orchestration.graph import LANGGRAPH_AVAILABLE
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
+VERSION_FILE = BASE_DIR.parent / "VERSION"
+APP_VERSION = VERSION_FILE.read_text(encoding="utf-8").strip() if VERSION_FILE.is_file() else "4.5.0"
 DATA_DIR = Path(os.getenv("DATAPILOT_DATA_DIR", str(BASE_DIR))).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 ENVIRONMENT = os.getenv("DATAPILOT_ENV", "development").lower()
@@ -50,11 +56,44 @@ EXPERIMENT_STORE = ExperimentStore(DATA_DIR / "datapilot_history.sqlite3")
 JOB_STORE = AnalysisJobStore(DATA_DIR / "datapilot_history.sqlite3")
 TOOL_REGISTRY = ToolRegistry()
 RESEARCH_RAG = ResearchRAG(DATA_DIR / "research_knowledge.sqlite3")
+_RATE_LIMIT_LOCK = Lock()
+_RATE_LIMIT_BUCKETS: dict[tuple[str, str], deque[float]] = defaultdict(deque)
+
+
+def _require_api_access(request: Request) -> None:
+    """Enforce optional bearer/API-key auth when DATAPILOT_API_TOKEN is configured."""
+    expected = os.getenv("DATAPILOT_API_TOKEN", "").strip()
+    if not expected:
+        return
+    auth_header = request.headers.get("authorization", "")
+    bearer = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else ""
+    api_key = request.headers.get("x-api-key", "").strip()
+    supplied = bearer or api_key
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="Missing or invalid API authentication token.")
+
+
+def _enforce_rate_limit(request: Request) -> None:
+    """Sliding-window per-client rate limiter for expensive/mutating endpoints."""
+    limit = int(os.getenv("DATAPILOT_RATE_LIMIT_PER_MIN", "60"))
+    if limit <= 0:
+        return
+    client_ip = request.client.host if request.client else "unknown"
+    bucket_key = (client_ip, request.url.path)
+    now = time.monotonic()
+    cutoff = now - 60.0
+    with _RATE_LIMIT_LOCK:
+        bucket = _RATE_LIMIT_BUCKETS[bucket_key]
+        while bucket and bucket[0] <= cutoff:
+            bucket.popleft()
+        if len(bucket) >= limit:
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Retry shortly.")
+        bucket.append(now)
 
 app = FastAPI(
     title="DataPilot API",
     description="Autonomous multi-agent data science REST API",
-    version="1.3.0",
+    version=APP_VERSION,
     docs_url=None if ENVIRONMENT == "production" else "/docs",
     redoc_url=None if ENVIRONMENT == "production" else "/redoc",
     openapi_url=None if ENVIRONMENT == "production" else "/openapi.json",
@@ -66,7 +105,7 @@ app.add_middleware(
     allow_origins=CORS_ORIGINS,
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
 ALLOWED_HOSTS = [x.strip() for x in os.getenv("DATAPILOT_ALLOWED_HOSTS", "localhost,127.0.0.1,testserver").split(",") if x.strip()]
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
@@ -212,7 +251,7 @@ def health():
     return {
         "status": "healthy",
         "service": "DataPilot REST API",
-        "version": "4.2.0",
+        "version": APP_VERSION,
         "orchestration": {"framework": "LangGraph" if LANGGRAPH_AVAILABLE else "python_fallback", "available": LANGGRAPH_AVAILABLE},
         "data_engine": {"configured": os.getenv("DATAPILOT_DATA_ENGINE", "auto"), "duckdb_available": importlib.util.find_spec("duckdb") is not None},
         "deep_learning": {"enabled": os.getenv("DATAPILOT_ENABLE_DEEP_LEARNING", "false").lower() in {"1", "true", "yes"} and importlib.util.find_spec("torch") is not None},
@@ -351,7 +390,7 @@ def _execute_analysis_job(job_id: str, df: pd.DataFrame, inquiry: str, target_co
         JOB_STORE.update(job_id, "failed", error_code=type(exc).__name__, current_stage="Failed")
 
 
-@app.post("/api/analysis/start", status_code=202)
+@app.post("/api/analysis/start", status_code=202, dependencies=[Depends(_require_api_access), Depends(_enforce_rate_limit)])
 async def start_analysis_endpoint(
     background_tasks: BackgroundTasks,
     file: Optional[UploadFile] = File(None),
@@ -377,7 +416,7 @@ def get_analysis_job(job_id: str):
     return job
 
 
-@app.post("/api/analyze")
+@app.post("/api/analyze", dependencies=[Depends(_require_api_access), Depends(_enforce_rate_limit)])
 async def analyze_endpoint(
     file: Optional[UploadFile] = File(None),
     sample_id: Optional[str] = Form(None),
@@ -402,14 +441,6 @@ async def analyze_endpoint(
     return result
 
 
-
-
-class AnalyticsQueryResponse(BaseModel):
-    status: str
-    plan: dict
-    result: dict
-
-
 @app.get("/api/history")
 def list_experiments(limit: int = 20):
     completed = EXPERIMENT_STORE.list(limit)
@@ -425,7 +456,7 @@ def get_agent_trace(experiment_id: str):
         raise HTTPException(status_code=404, detail="Experiment not found.")
     return {"experiment_id": experiment_id, "orchestration": result.get("orchestration", {}), "agents": result.get("agent_trace", [])}
 
-@app.post("/api/history/{experiment_id}/report/regenerate")
+@app.post("/api/history/{experiment_id}/report/regenerate", dependencies=[Depends(_require_api_access), Depends(_enforce_rate_limit)])
 def regenerate_saved_report(experiment_id: str):
     """Regenerate the narrative for a saved analysis using current server LLM settings."""
     result = EXPERIMENT_STORE.get(experiment_id)
@@ -561,7 +592,7 @@ def get_experiment(experiment_id: str):
     return result
 
 
-@app.post("/api/models/{artifact_id}/predict")
+@app.post("/api/models/{artifact_id}/predict", dependencies=[Depends(_require_api_access), Depends(_enforce_rate_limit)])
 async def predict_with_saved_model(artifact_id: str, file: UploadFile = File(...)):
     """Run predictions with a model artifact created by this Data Pilot instance."""
     try:
@@ -602,7 +633,7 @@ class ResearchQueryRequest(BaseModel):
 def research_status():
     return RESEARCH_RAG.status()
 
-@app.post("/api/research/index")
+@app.post("/api/research/index", dependencies=[Depends(_require_api_access), Depends(_enforce_rate_limit)])
 def research_index(request: ResearchIndexRequest):
     try: return RESEARCH_RAG.index_text(request.title, request.text, request.source, request.doi)
     except ValueError as exc: raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -611,7 +642,7 @@ def research_index(request: ResearchIndexRequest):
 def research_query(request: ResearchQueryRequest):
     return RESEARCH_RAG.answer_context(request.query, request.top_k)
 
-@app.post("/api/research/index-pdf")
+@app.post("/api/research/index-pdf", dependencies=[Depends(_require_api_access), Depends(_enforce_rate_limit)])
 async def research_index_pdf(file: UploadFile = File(...), title: str = Form(""), doi: str = Form("")):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=415, detail="Upload a PDF research document.")
@@ -650,17 +681,19 @@ class ToolCallRequest(BaseModel):
     arguments: dict = Field(default_factory=dict)
 
 
-@app.post("/api/tools/call")
+@app.post("/api/tools/call", dependencies=[Depends(_require_api_access), Depends(_enforce_rate_limit)])
 def call_agent_tool(request: ToolCallRequest):
     try:
-        TOOL_REGISTRY.get(request.name)
+        args = TOOL_REGISTRY.validate_arguments(request.name, request.arguments)
     except KeyError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if request.name == "dataset.list_samples":
         return {"content": [{"type": "text", "text": SAMPLE_METADATA}]}
     if request.name == "dataset.profile":
         df = _load_dataframe(None, "churn")
-        profile = profile_dataframe(df, target_column=request.arguments.get("target_column"))
+        profile = profile_dataframe(df, target_column=args.get("target_column"))
         return {"content": [{"type": "text", "text": profile.to_dict()}]}
     if request.name == "dataset.eda":
         df = _load_dataframe(None, "churn")
@@ -673,18 +706,19 @@ def call_agent_tool(request: ToolCallRequest):
         scenarios = RiskTrajectoryGenerator().evaluate(plan, profile, SecurityGuardian())
         return {"content": [{"type": "text", "text": {"scenarios": scenarios, "all_blocked": all(x["blocked"] for x in scenarios)}}]}
     if request.name == "analysis.run_sample":
-        sample_id = str(request.arguments.get("sample_id", ""))
+        sample_id = str(args.get("sample_id", ""))
         meta = next((x for x in SAMPLE_METADATA if x["id"] == sample_id), None)
         if not meta: raise HTTPException(status_code=400, detail="sample_id must be churn, housing, or sales.")
-        result = run_pipeline(_load_dataframe(None, sample_id), str(request.arguments.get("inquiry", meta["suggested_query"])), meta["target_column"], meta["problem_type"], meta["filename"])
+        result = run_pipeline(_load_dataframe(None, sample_id), str(args.get("inquiry", meta["suggested_query"])), meta["target_column"], meta["problem_type"], meta["filename"])
         experiment_id = EXPERIMENT_STORE.save(meta["filename"], result)
         return {"content": [{"type": "text", "text": {"experiment_id": experiment_id, "result": result}}]}
     if request.name == "research.search":
-        return {"content": [{"type": "text", "text": RESEARCH_RAG.answer_context(str(request.arguments.get("query", "")), int(request.arguments.get("top_k", 4)))}]}
+        top_k = max(1, min(int(args.get("top_k", 4)), 10))
+        return {"content": [{"type": "text", "text": RESEARCH_RAG.answer_context(str(args.get("query", "")), top_k)}]}
     if request.name == "system.capabilities":
         return {"content": [{"type": "text", "text": {"langgraph": LANGGRAPH_AVAILABLE, "duckdb": get_engine().name, "deep_learning_enabled": os.getenv("DATAPILOT_ENABLE_DEEP_LEARNING", "false"), "mlflow_enabled": os.getenv("DATAPILOT_ENABLE_MLFLOW", "false"), "research": RESEARCH_RAG.status()}}]}
     if request.name == "analysis.report":
-        experiment_id = request.arguments.get("experiment_id")
+        experiment_id = args.get("experiment_id")
         result = EXPERIMENT_STORE.get(str(experiment_id)) if experiment_id else None
         if result is None:
             raise HTTPException(status_code=400, detail="Provide a valid experiment_id.")
