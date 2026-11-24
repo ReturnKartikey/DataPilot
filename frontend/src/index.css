@@ -1,0 +1,17 @@
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background-color: #FDFBF7;
+  color: #2C221E;
+  font-family: 'EB Garamond', Georgia, serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button, input, textarea {
+  font-family: inherit;
+}

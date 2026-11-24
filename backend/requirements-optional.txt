@@ -1,0 +1,13 @@
+# Optional integrations: boosted trees, tracking, MCP, deep learning and research
+mlflow>=2.18,<4.0
+xgboost>=2.1,<4.0
+
+# Optional MCP stdio transport
+mcp>=1.0,<2.0
+
+# Optional CPU/GPU deep-learning extension (choose a PyTorch wheel appropriate to your platform)
+torch>=2.2,<3.0
+
+# Optional semantic research embeddings and PDF text extraction
+sentence-transformers>=3.0,<6.0
+pymupdf>=1.24,<2.0

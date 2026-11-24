@@ -1,0 +1,23 @@
+services:
+  datapilot:
+    build: .
+    container_name: datapilot
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DATAPILOT_ENV: production
+      DATAPILOT_DATA_DIR: /var/lib/datapilot
+      DATAPILOT_CORS_ORIGINS: ${DATAPILOT_CORS_ORIGINS:-http://localhost:8000}
+    volumes:
+      - backend-data:/var/lib/datapilot
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+volumes:
+  backend-data:

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Data Pilot">
+  <g fill="none" stroke="#1b3127" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M13 91C21 57 48 29 79 27c17-1 29 7 34 20"/>
+  </g>
+  <g fill="#1b3127">
+    <rect x="28" y="66" width="15" height="33" rx="5"/>
+    <rect x="51" y="49" width="15" height="50" rx="5"/>
+    <rect x="74" y="30" width="15" height="69" rx="5"/>
+  </g>
+  <path d="M17 101c24 7 52 1 73-17" fill="none" stroke="#1b3127" stroke-width="7" stroke-linecap="round"/>
+  <path d="M99 12v17M90.5 20.5h17" stroke="#1b3127" stroke-width="5" stroke-linecap="round"/>
+</svg>
