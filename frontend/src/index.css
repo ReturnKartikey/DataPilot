@@ -1,17 +1,27 @@
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
-html, body {
+html,
+body {
   margin: 0;
   padding: 0;
-  background-color: #FDFBF7;
-  color: #2C221E;
-  font-family: 'EB Garamond', Georgia, serif;
+  background-color: #f4f6f1;
+  color: #1c2822;
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
-button, input, textarea {
+button,
+input,
+select,
+textarea {
   font-family: inherit;
 }

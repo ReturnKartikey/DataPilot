@@ -1071,9 +1071,27 @@ export default function AnalysisResultsModal({ data, onClose }) {
                   <button onClick={() => { const blob = new Blob([visibleReport.markdown], { type: "text/markdown;charset=utf-8" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "datapilot-analysis-report.md"; a.click(); URL.revokeObjectURL(url); }} style={{ padding: "9px 14px", background: T.ink, color: T.cream, border: "none", cursor: "pointer", marginBottom: 14 }}>Export Markdown Report</button>
                   {experiment_id && <a href={`/api/history/${encodeURIComponent(experiment_id)}/report.pdf`} target="_blank" rel="noreferrer" style={{ display: "inline-block", padding: "9px 14px", background: T.clay, color: "white", textDecoration: "none", margin: "0 0 14px 8px", fontSize: 12 }}>Export PDF Report</a>}
                   {visibleReport.question_answer && (
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: 18, marginBottom: 16, background: "#20392D", color: "#FDFBF7", borderRadius: 10 }}>
-                      <div><div style={{ fontSize: 11, letterSpacing: 1, color: "#CFE77B", textTransform: "uppercase" }}>Direct answer · computed from uploaded data</div><div style={{ fontFamily: T.playfair, fontSize: 18, marginTop: 5 }}>{visibleReport.question_answer.category} · {visibleReport.question_answer.count.toLocaleString()} of {visibleReport.question_answer.total.toLocaleString()}</div><div style={{ fontSize: 11, opacity: .8, marginTop: 4 }}>Column: {visibleReport.question_answer.target_column}</div></div>
-                      <div style={{ fontFamily: T.playfair, fontSize: 34, fontWeight: 700, color: "#CFE77B", whiteSpace: "nowrap" }}>{visibleReport.question_answer.percentage.toFixed(2)}%</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 18, marginBottom: 16, background: "#20392D", color: "#FDFBF7", borderRadius: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+                        <div>
+                          <div style={{ fontSize: 11, letterSpacing: 1, color: "#CFE77B", textTransform: "uppercase" }}>Direct answer · computed from uploaded data</div>
+                          <div style={{ fontFamily: T.playfair, fontSize: 18, marginTop: 5 }}>
+                            {visibleReport.question_answer.answer_type === "scalar_metric"
+                              ? `${visibleReport.question_answer.operation?.toUpperCase()} ${visibleReport.question_answer.target_column}: ${Number(visibleReport.question_answer.answer_value).toLocaleString()}`
+                              : `${visibleReport.question_answer.category} · ${Number(visibleReport.question_answer.count || 0).toLocaleString()} of ${Number(visibleReport.question_answer.total || 0).toLocaleString()}`}
+                          </div>
+                          {visibleReport.question_answer.summary && <div style={{ fontSize: 12, opacity: 0.9, marginTop: 4 }}>{visibleReport.question_answer.summary}</div>}
+                          <div style={{ fontSize: 11, opacity: 0.8, marginTop: 4 }}>
+                            Column: {visibleReport.question_answer.target_column || "dataset"}
+                            {visibleReport.question_answer.filters_applied?.length > 0 && ` · Filters: ${visibleReport.question_answer.filters_applied.map((f) => `${f.column} ${f.op} ${f.value}`).join(", ")}`}
+                          </div>
+                        </div>
+                        <div style={{ fontFamily: T.playfair, fontSize: 34, fontWeight: 700, color: "#CFE77B", whiteSpace: "nowrap" }}>
+                          {visibleReport.question_answer.answer_type === "scalar_metric"
+                            ? Number(visibleReport.question_answer.answer_value).toLocaleString()
+                            : `${Number(visibleReport.question_answer.percentage || 0).toFixed(2)}%`}
+                        </div>
+                      </div>
                     </div>
                   )}
                   {(visibleReport.charts || []).map((chart) => <ReportChart key={chart.id || chart.title} chart={chart} />)}

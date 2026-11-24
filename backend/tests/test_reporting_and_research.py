@@ -91,8 +91,14 @@ class ResearchAgentTests(unittest.TestCase):
 
     def test_offline_findings_triggers(self):
         import os
+        import tempfile
         from unittest.mock import patch
-        offline = patch.dict(os.environ, {"DATAPILOT_ENABLE_LIVE_RESEARCH": "false"})
+        tmp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp_dir.cleanup)
+        offline = patch.dict(os.environ, {
+            "DATAPILOT_ENABLE_LIVE_RESEARCH": "false",
+            "DATAPILOT_DATA_DIR": tmp_dir.name,
+        })
         offline.start()
         self.addCleanup(offline.stop)
         profile = DatasetProfile(

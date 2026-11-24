@@ -275,8 +275,12 @@ def _resolve_context(df, profile, inquiry, target_column, problem_type):
 
     if not effective_target and inquiry.strip():
         try:
-            from data_pilot.llm.intent import understand_intent
-            llm_plan = understand_intent(inquiry, [str(c) for c in df.columns])
+            from data_pilot.llm.intent import build_schema_context, understand_intent
+            llm_plan = understand_intent(
+                inquiry,
+                [str(c) for c in df.columns],
+                schema_context=build_schema_context(df),
+            )
             candidate = llm_plan.get("target") or llm_plan.get("column")
             if candidate in df.columns:
                 effective_target = candidate
@@ -349,19 +353,52 @@ def _run_pipeline_core(
     engine_profile = selected_engine.profile(df)
     profile = profile_dataframe(df, target_column=target_column)
 
+    # Run schema-grounded LLM/fallback intent + query planning first when an inquiry is provided.
+    intent_plan: dict[str, Any] | None = None
+    if (inquiry or "").strip():
+        try:
+            from data_pilot.llm.intent import build_schema_context, understand_intent
+            intent_plan = understand_intent(
+                inquiry,
+                [str(c) for c in df.columns],
+                schema_context=build_schema_context(df),
+            )
+        except Exception:
+            intent_plan = None
+
     effective_target, resolved_problem_type = _resolve_context(
         df, profile, inquiry, target_column, problem_type,
     )
-    # Aggregation/ranking questions are descriptive analytics, not classification
-    # tasks. Preserve the semantic focus for EDA but do not train classifiers on it.
-    descriptive_focus = effective_target
+
+    # Smart auto-routing: distinguish direct question answering from predictive ML.
+    # Explicit user problem_type ("classification" / "regression") always forces ML.
     q_lower = (inquiry or "").casefold()
-    descriptive_request = any(term in q_lower for term in (
+    explicit_ml_mode = problem_type in {"classification", "regression"}
+    heuristic_descriptive = any(term in q_lower for term in (
         "top ", "most number", "most movies", "count", "how many", "number of",
         "distribution", "breakdown", "rank", "ranking", "highest", "lowest",
         "average", "mean", "median", "sum", "total", "compare", "group by",
     )) and not any(term in q_lower for term in ("predict", "forecast", "classify", "classification", "regression", "churn prediction"))
-    if descriptive_request and target_column is None:
+
+    descriptive_request = False
+    if not explicit_ml_mode:
+        if intent_plan and intent_plan.get("task_mode") == "question_answering" and not target_column:
+            descriptive_request = True
+        elif intent_plan and intent_plan.get("task_mode") == "question_answering" and heuristic_descriptive:
+            descriptive_request = True
+        elif heuristic_descriptive and target_column is None:
+            descriptive_request = True
+
+    intent_focus = None
+    if intent_plan:
+        intent_focus = (
+            (intent_plan.get("filters") or [{}])[0].get("column")
+            or intent_plan.get("group_by")
+            or intent_plan.get("column")
+            or intent_plan.get("target")
+        )
+    descriptive_focus = intent_focus or effective_target
+    if descriptive_request:
         effective_target = None
         resolved_problem_type = "unknown"
 
@@ -374,9 +411,9 @@ def _run_pipeline_core(
         problem_type=resolved_problem_type,
     )
     plan = PlannerAgent().create_plan(profile, objective)
-    if descriptive_request and target_column is None:
+    if descriptive_request:
         # Prevent PlannerAgent's generic last-column heuristic from turning an
-        # aggregation request into a spurious classification task.
+        # exploratory/question-answering request into a spurious ML task.
         from dataclasses import replace
         plan = replace(plan, target_column=None, problem_type="unknown",
                        steps=("profile", "clean", "eda"),
@@ -436,7 +473,24 @@ def _run_pipeline_core(
     )
 
     eda = EDAAgent().analyze(df, target_column=plan.target_column or descriptive_focus)
-    if descriptive_request and descriptive_focus and descriptive_focus in df.columns:
+    if intent_plan and (descriptive_request or intent_plan.get("filters") or intent_plan.get("group_by") or intent_plan.get("operation") not in {None, "none"}):
+        try:
+            from data_pilot.analytics.query_executor import execute_question_plan
+            query_answer = execute_question_plan(df, intent_plan)
+            if query_answer:
+                eda["query_answer"] = query_answer
+                if query_answer.get("rows") and "requested_analysis" not in eda:
+                    eda["requested_analysis"] = {
+                        "kind": query_answer.get("operation", "top_value_counts"),
+                        "column": query_answer.get("target_column"),
+                        "metric": query_answer.get("metric_column") or "record_count",
+                        "limit": int(intent_plan.get("limit") or 10),
+                        "results": [{"value": r["label"], "count": r["value"]} for r in query_answer["rows"]],
+                        "note": query_answer.get("summary", ""),
+                    }
+        except Exception:
+            pass
+    if descriptive_request and descriptive_focus and descriptive_focus in df.columns and "requested_analysis" not in eda:
         focus_series = df[descriptive_focus].dropna().astype(str).str.strip()
         # Multi-valued columns such as directors/cast/genres/countries need to
         # be exploded before counting entities, rather than counting whole cells.
@@ -798,6 +852,7 @@ def _run_pipeline_core(
             "preview": preview_rows,
         },
         "plan": plan.to_dict(),
+        "intent": intent_plan,
         "security": security.to_dict(),
         "preprocessing": preprocessing,
         "eda": eda,

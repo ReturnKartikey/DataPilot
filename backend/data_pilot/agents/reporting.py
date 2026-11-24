@@ -77,10 +77,12 @@ Each array should contain at most 5 concise, specific items. No markdown fences.
 
     @staticmethod
     def _question_specific_answer(result: dict[str, Any], dataset_name: str = "") -> dict[str, Any] | None:
-        """Resolve requested class/category labels against deterministic EDA counts."""
+        """Resolve requested class/category labels or structured query answers against deterministic EDA counts."""
+        eda = result.get("eda", {}) or {}
+        if eda.get("query_answer"):
+            return eda["query_answer"]
         plan = result.get("plan", {})
         question = str(plan.get("goal", "")).casefold()
-        eda = result.get("eda", {}) or {}
         distribution = eda.get("target_distribution", {}) or {}
         percentages = eda.get("target_distribution_percentages", {}) or {}
         if not distribution:
@@ -109,12 +111,14 @@ Each array should contain at most 5 concise, specific items. No markdown fences.
 
         labels = {str(k).strip().casefold(): str(k) for k in distribution}
         requested = None
-        # Exact observed category label (e.g. neutral/positive/negative) wins.
-        for label in distribution:
+        # Check longest observed category labels first so "Not Placed" beats "Placed".
+        for label in sorted(distribution, key=lambda item: len(str(item).strip()), reverse=True):
             label_text = str(label).strip().casefold()
-            if label_text and re.search(r"(?<![a-z0-9])" + re.escape(label_text) + r"(?![a-z0-9])", question):
-                requested = str(label)
-                break
+            if label_text:
+                pattern = r"(?<![a-z0-9])" + re.escape(label_text).replace(r"\ ", r"[\s_-]+") + r"(?![a-z0-9])"
+                if re.search(pattern, question):
+                    requested = str(label)
+                    break
 
         # Semantic aliases are only used when the uploaded dataset's labels are coded.
         # Counts and percentages always come from EDA; these aliases never encode results.
@@ -167,8 +171,16 @@ Each array should contain at most 5 concise, specific items. No markdown fences.
         charts: list[dict[str, Any]] = []
         question = str(result.get("plan", {}).get("goal", "")).casefold()
         requested_pie = any(token in question for token in ("pie chart", "pie graph", "donut chart", "doughnut chart"))
+        query_chart = (eda.get("query_answer") or {}).get("chart")
+        has_query_dist_chart = False
+        if isinstance(query_chart, dict) and query_chart.get("data"):
+            q_chart = dict(query_chart)
+            if requested_pie and q_chart.get("type") == "bar":
+                q_chart["type"] = "pie"
+            charts.append(q_chart)
+            has_query_dist_chart = q_chart.get("id") in {"question-filter-distribution", "question-column-distribution"}
         target_rows = eda.get("target_distribution_rows", [])
-        if target_rows:
+        if target_rows and not has_query_dist_chart:
             labels = [str(x["label"]) for x in target_rows]
             chart_rows = []
             mushroom_binary = {label.strip().lower() for label in labels} == {"e", "p"}
@@ -180,7 +192,7 @@ Each array should contain at most 5 concise, specific items. No markdown fences.
             charts.append({"id": "target-distribution", "type": "pie" if requested_pie else "bar",
                            "title": f"Target distribution — {result.get('plan', {}).get('target_column') or 'target'}",
                            "data": chart_rows})
-        else:
+        elif not has_query_dist_chart:
             target_dist = eda.get("target_distribution", {}) or {}
             if target_dist:
                 total = sum(int(v) for v in target_dist.values())
@@ -228,12 +240,21 @@ Each array should contain at most 5 concise, specific items. No markdown fences.
         ]
         if question_answer:
             lines += ["## Direct answer to your question"]
-            if question_answer.get("answer_type") == "highest_frequency_category":
+            if question_answer.get("summary"):
+                lines += [f"- {question_answer['summary']}"]
+            elif question_answer.get("answer_type") == "highest_frequency_category":
                 lines += [f"- **{question_answer['category']}** is the most frequent category, with **{question_answer['count']:,}** records ({question_answer['percentage']:.2f}% of {question_answer['total']:,} non-missing records)."]
             else:
-                lines += [f"- **{question_answer['category'].capitalize()}:** {question_answer['count']:,} out of {question_answer['total']:,}.",
+                lines += [f"- **{str(question_answer['category']).capitalize()}:** {question_answer['count']:,} out of {question_answer['total']:,}.",
                           f"- **Percentage:** {question_answer['percentage']:.2f}%."]
-            lines += [f"- **Calculated from:** `{question_answer['target_column']}` column in the uploaded dataset.", ""]
+            if question_answer.get("rows"):
+                for row in question_answer["rows"][:10]:
+                    pct_part = f" ({row['percentage']:.2f}%)" if row.get("percentage") is not None else ""
+                    lines += [f"  - **{row['label']}**: {row['value']:,}{pct_part}" if isinstance(row.get("value"), int) else f"  - **{row['label']}**: {row['value']:,.2f}{pct_part}"]
+            if question_answer.get("target_column"):
+                lines += [f"- **Calculated from:** `{question_answer['target_column']}` column in the uploaded dataset.", ""]
+            else:
+                lines += [""]
         if narrative:
             lines += ["### LLM-assisted interpretation (narrative only)"]
             lines += [f"- {x}" for x in narrative["executive_interpretation"]]

@@ -4,6 +4,7 @@ The default retriever is TF-IDF (no model download or external API). Optional
 SentenceTransformers can be added later without changing the store contract.
 """
 from __future__ import annotations
+from contextlib import contextmanager
 import json, os, re, sqlite3, uuid
 from pathlib import Path
 from typing import Any
@@ -20,8 +21,15 @@ class ResearchRAG:
             db.execute("CREATE TABLE IF NOT EXISTS chunks (id TEXT PRIMARY KEY, title TEXT NOT NULL, source TEXT, doi TEXT, section TEXT, chunk TEXT NOT NULL, embedding TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
             columns = {row[1] for row in db.execute("PRAGMA table_info(chunks)").fetchall()}
             if "embedding" not in columns: db.execute("ALTER TABLE chunks ADD COLUMN embedding TEXT")
+    @contextmanager
     def _db(self):
-        db=sqlite3.connect(self.db_path); db.row_factory=sqlite3.Row; return db
+        db=sqlite3.connect(self.db_path)
+        db.row_factory=sqlite3.Row
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
     @staticmethod
     def _chunks(text: str, size: int=1100, overlap: int=150):
         clean=re.sub(r"\s+"," ",text).strip()

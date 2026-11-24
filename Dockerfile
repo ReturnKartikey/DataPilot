@@ -18,4 +18,4 @@ COPY --from=frontend-build /workspace/frontend/dist /app/frontend/dist
 RUN mkdir -p /var/lib/datapilot && useradd --create-home --uid 10001 datapilot && chown -R datapilot:datapilot /app /var/lib/datapilot
 USER datapilot
 EXPOSE 8000
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${DATAPILOT_WORKERS:-1}"]
